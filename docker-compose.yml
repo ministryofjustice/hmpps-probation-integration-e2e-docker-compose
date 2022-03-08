@@ -1,0 +1,121 @@
+version: "3"
+
+services:
+  test-runner:
+    build: .
+    command: '/tests/${TEST:-prisoner-released}.sh'
+    environment:
+      - AWS_ACCESS_KEY_ID=foobar
+      - AWS_SECRET_ACCESS_KEY=foobar
+      - AWS_DEFAULT_REGION=eu-west-2
+    networks:
+      - hmpps
+
+  prison-to-probation-update:
+    image: quay.io/hmpps/prison-to-probation-update:latest
+    networks:
+      - hmpps
+    depends_on:
+      - localstack
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health/ping"]
+    environment:
+      - SERVER_PORT=8080
+      - SPRING_PROFILES_ACTIVE=stdout,localstack
+      - COMMUNITY_ENDPOINT_URL=http://community-api:8080
+      - PRISON_ENDPOINT_URL=http://prison-api:8080
+      - OAUTH_ENDPOINT_URL=http://oauth:8080/auth
+      - OAUTH_API_BASE_URL=http://oauth:8080/auth
+      - HMPPS_DYNAMODB_LOCALSTACKURL=http://localstack:4566
+      - HMPPS_SQS_PROVIDER=localstack
+      - HMPPS_SQS_LOCALSTACKURL=http://localstack:4566
+      - HMPPS_SQS_QUEUES_HMPPSEVENTQUEUE_SUBSCRIBEFILTER={"eventType":["prison-offender-events.prisoner.released"]}
+      - HMPPS_SQS_QUEUES_HMPPSEVENTQUEUE_QUEUENAME=hmpps-queue
+      - HMPPS_SQS_QUEUES_HMPPSEVENTQUEUE_DLQNAME=hmpps-dlq
+      - HMPPS_SQS_QUEUES_HMPPSEVENTQUEUE_SUBSCRIBETOPICID=hmppseventtopic
+      - HMPPS_SQS_TOPICS_HMPPSEVENTTOPIC_ARN=arn:aws:sns:eu-west-2:000000000000:hmpps-events-topic
+      - AWS_ACCESS_KEY_ID=foobar
+      - AWS_SECRET_ACCESS_KEY=foobar
+      - AWS_DEFAULT_REGION=eu-west-2
+      - OAUTH_CLIENT_SECRET=delius-api-client
+      - OAUTH_CLIENT_ID=delius-api-client
+
+  community-api:
+    image: quay.io/hmpps/community-api
+    restart: on-failure
+    networks:
+      - hmpps
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev,oracle
+      - SPRING_DATASOURCE_URL=jdbc:oracle:thin:@//oracledb:1521/XEPDB1
+      - SPRING_DATASOURCE_USERNAME=delius_pool
+      - SPRING_DATASOURCE_PASSWORD=NDelius1
+      - SPRING_FLYWAY_ENABLED=false
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://oauth:8080/auth/.well-known/jwks.json
+      - DELIUSAPI_BASEURL=http://delius-api:8080
+
+  delius-api:
+    # Login required: `aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/hmpps/delius-api`
+    image: public.ecr.aws/hmpps/delius-api:latest
+    restart: on-failure
+    networks:
+      - hmpps
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev,oracle
+      - SPRING_DATASOURCE_URL=jdbc:oracle:thin:@//oracledb:1521/XEPDB1
+      - SPRING_DATASOURCE_USERNAME=delius_pool
+      - SPRING_DATASOURCE_PASSWORD=NDelius1
+      - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://oauth:8080/auth/.well-known/jwks.json
+
+  oauth:
+    image: quay.io/hmpps/hmpps-auth:latest
+    networks:
+      - hmpps
+    ports:
+      - "9090:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/auth/health"]
+    environment:
+      - SPRING_PROFILES_ACTIVE=dev,delius
+      - DELIUS_ENDPOINT_URL=http://community-api:8080
+      - SPRING_H2_CONSOLE_SETTINGS_WEBALLOWOTHERS=true
+      - AUTH_FLYWAY_LOCATIONS=classpath:db/auth,classpath:db/auth_h2,classpath:db/dev/data/auth,filesystem:/app/db/auth
+    volumes:
+      - "./data/auth:/app/db/auth:z"
+
+  oracledb:
+    # Login required: `aws ecr get-login-password --profile eng-dev | docker login --username AWS --password-stdin 895523100917.dkr.ecr.eu-west-2.amazonaws.com`
+    image: 895523100917.dkr.ecr.eu-west-2.amazonaws.com/hmpps/delius-test-db:latest
+    networks:
+      - hmpps
+    ports:
+      - "1521:1521"
+
+  localstack:
+    image: localstack/localstack:0.12.10
+    networks:
+      - hmpps
+    ports:
+      - "4566-4597:4566-4597"
+      - "8999:8080"
+    environment:
+      - SERVICES=sns,sqs,es,dynamodb
+      - DEBUG=${DEBUG- }
+      - DATA_DIR=${DATA_DIR- }
+      - PORT_WEB_UI=${PORT_WEB_UI- }
+      - LAMBDA_EXECUTOR=${LAMBDA_EXECUTOR- }
+      - KINESIS_ERROR_PROBABILITY=${KINESIS_ERROR_PROBABILITY- }
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - AWS_EXECUTION_ENV=True
+      - DEFAULT_REGION=eu-west-2
+      - HOSTNAME_EXTERNAL=localstack
+    volumes:
+      - "${TMPDIR:-/tmp/localstack}:/tmp/localstack"
+      - "/var/run/docker.sock:/var/run/docker.sock"
+
+networks:
+  hmpps:
