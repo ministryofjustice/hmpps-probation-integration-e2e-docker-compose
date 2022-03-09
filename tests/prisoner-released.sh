@@ -18,18 +18,20 @@ aws --endpoint-url=http://localstack:4566 sns publish \
       "description":"A prisoner has been released from prison",
       "additionalInformation": {
         "nomsNumber":"A0289IR",
-        "prisonId":"BZIHMP",
+        "prisonId":"BZI",
         "reason":"RELEASED",
         "details":"Release date 2021-05-12"
       }
     }'
-sleep 30 # and wait for message to be processed
+sleep 10 # and wait for message to be processed
 
 # Then there should be a single new release record
 count=$(sqlplus -S delius_app_schema/NDelius1@oracledb:1521/XEPDB1 <<EOF
-  select count(*) from release
+  select count(*) as created_releases
+  from release
   where offender_id = (select offender_id from offender where noms_number = 'A0289IR')
   and last_updated_datetime > sysdate - interval '5' minute;
 EOF
 )
+echo "$count"
 echo "$count" | grep 1
