@@ -1,0 +1,90 @@
+version: 2.1
+
+orbs:
+  aws-cli: circleci/aws-cli@2.0.0
+  slack: circleci/slack@4.1.3
+
+jobs:
+  test:
+    machine:
+      image: ubuntu-2004:current
+    steps:
+      - checkout
+      - aws-cli/setup
+      - run:
+          name: Login to ECR
+          command: |
+            temp_role=$(aws sts assume-role --role-arn "$AWS_ROLE_ARN" --role-session-name "circleci-$CIRCLE_BUILD_NUM-$RANDOM")
+            echo "export AWS_ACCESS_KEY_ID=$(echo $temp_role | jq .Credentials.AccessKeyId | xargs)" >> $BASH_ENV; source $BASH_ENV;
+            echo "export AWS_SECRET_ACCESS_KEY=$(echo $temp_role | jq .Credentials.SecretAccessKey | xargs)" >> $BASH_ENV; source $BASH_ENV;
+            echo "export AWS_SESSION_TOKEN=$(echo $temp_role | jq .Credentials.SessionToken | xargs)" >> $BASH_ENV; source $BASH_ENV;
+            aws configure set aws_session_token "$(echo $temp_role | jq .Credentials.SessionToken | xargs)" --profile default
+            aws ecr get-login-password | docker login --username AWS --password-stdin 895523100917.dkr.ecr.eu-west-2.amazonaws.com
+            aws ecr-public get-login-password --region us-east-1 | docker login --username AWS --password-stdin public.ecr.aws/hmpps
+      - run:
+          name: Run tests
+          command: |
+            echo Starting services...
+            docker-compose --project-name probation-integration up --quiet-pull --detach
+            docker-compose --project-name probation-integration logs --follow &
+            
+            echo Running tests...
+            docker build --tag test-runner .
+            docker container run --network probation-integration_hmpps \
+              -e AWS_ACCESS_KEY_ID=foobar -e AWS_SECRET_ACCESS_KEY=foobar -e AWS_DEFAULT_REGION=eu-west-2 \
+              test-runner /tests/prisoner-released.sh
+      - slack/notify:
+          event: fail
+          branch_pattern: main
+          channel: probation-integration-notifications
+          custom: |
+            {
+              "blocks": [
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "End-to-end tests failed"
+                  },
+                  "accessory": {
+                    "type": "button",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "View job"
+                    },
+                    "url": "https://circleci.com/workflow-run/${CIRCLE_WORKFLOW_ID}"
+                  }
+                },
+                {
+                  "type": "context",
+                  "elements": [
+                    {
+                      "type": "mrkdwn",
+                      "text": ":circleci-${CCI_STATUS}: *<https://github.com/${CIRCLE_PROJECT_USERNAME}/${CIRCLE_PROJECT_REPONAME}|${CIRCLE_PROJECT_REPONAME}>*"
+                    }
+                  ]
+                }
+              ]
+            }
+
+workflows:
+  version: 2
+  run-tests:
+    jobs:
+      - test:
+          context:
+            - hmpps-common-vars
+            - hmpps-delius-push-to-ecr
+  scheduled:
+    jobs:
+      - test:
+          context:
+            - hmpps-common-vars
+            - hmpps-delius-push-to-ecr
+    triggers:
+      - schedule:
+          cron: "0 7 * * 1-5"
+          filters:
+            branches:
+              only:
+                - main
