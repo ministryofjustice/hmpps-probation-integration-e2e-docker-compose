@@ -18,7 +18,7 @@ aws --endpoint-url=http://localstack:4566 sns publish \
       "description":"A prisoner has been released from prison",
       "additionalInformation": {
         "nomsNumber":"A0289IR",
-        "prisonId":"BZIHMP",
+        "prisonId":"BZI",
         "reason":"RELEASED",
         "details":"Release date 2021-05-12"
       }
