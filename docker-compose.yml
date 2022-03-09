@@ -44,6 +44,7 @@ services:
       - SPRING_FLYWAY_ENABLED=false
       - SPRING_SECURITY_OAUTH2_RESOURCESERVER_JWT_JWK_SET_URI=http://oauth:8080/auth/.well-known/jwks.json
       - DELIUSAPI_BASEURL=http://delius-api:8080
+      - FEATURES_NOMS_UPDATE_RELEASE=true
     networks:
       - hmpps
 
